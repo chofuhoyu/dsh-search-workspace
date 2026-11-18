@@ -1,0 +1,6 @@
+# Insert the workspace search UI. The Host half is a no-op; the browser half
+# registers into the sidebar footer, the shell overlay, and the New Session
+# workspace picker.
+- insert:
+    - id: search-workspace
+      name: dsh-search-workspace

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Search workspaces",
-    "description": "Search workspaces by name or path from the left sidebar and the New Session workspace picker, then open a recent session or start a new one."
+    "description": "Search workspaces by name or path directly in the left sidebar while keeping session search, and search the New Session workspace picker too. Direct selection, session menus, and workspace management stay available."
   }
 }

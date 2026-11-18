@@ -2,9 +2,9 @@
  * Offline checks for dsh-search-workspace.
  *
  * The browser bundle is evaluated the way the client module loader does, then
- * `apply` runs against a minimal fake Client context. The search helpers and
- * the closed/opened component shapes are exercised without a browser. This
- * does not replace installing the bundle in a live Harness profile.
+ * `apply` runs against a minimal fake Client context. The browser component is
+ * rendered once with fake hooks, and the pure search/tree helpers are exercised
+ * directly. This does not replace installing the bundle in a live profile.
  */
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -26,8 +26,11 @@ assert.deepEqual(Array.from(manifest.dsh.client.inject), [
   '@deepseek-ai/dsh-api-workspace-controller',
   '@deepseek-ai/dsh-client-locale',
   '@deepseek-ai/dsh-client-shortcuts',
+  '@deepseek-ai/dsh-client-ui-context-menu',
   '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-renderer',
+  '@deepseek-ai/dsh-client-ui-session',
   '@deepseek-ai/dsh-client-ui-sidebar',
   '@deepseek-ai/dsh-client-ui-workspace',
 ])
@@ -107,14 +110,30 @@ const React = {
 }
 const primitives = {
   Button: Symbol('Button'),
+  IconArchiveOffOutlineRegular: Symbol('IconArchiveOffOutlineRegular'),
   IconCheckOutlineRegular: Symbol('IconCheckOutlineRegular'),
+  IconChevronsUpDownOutlineRegular: Symbol('IconChevronsUpDownOutlineRegular'),
+  IconClockOutlineRegular: Symbol('IconClockOutlineRegular'),
   IconCloseFillRegular: Symbol('IconCloseFillRegular'),
+  IconEditOutlineRegular: Symbol('IconEditOutlineRegular'),
+  IconEllipsisOutlineRegular: Symbol('IconEllipsisOutlineRegular'),
   IconFolderCloseRegular: Symbol('IconFolderCloseRegular'),
+  IconFolderOpenRegular: Symbol('IconFolderOpenRegular'),
+  IconNewChatOutlineRegular: Symbol('IconNewChatOutlineRegular'),
+  IconPinFillRegular: Symbol('IconPinFillRegular'),
   IconPlusOutlineRegular: Symbol('IconPlusOutlineRegular'),
+  IconProjectAddOutlineRegular: Symbol('IconProjectAddOutlineRegular'),
+  IconQueueOutlineRegular: Symbol('IconQueueOutlineRegular'),
   IconSearchOutlineRegular: Symbol('IconSearchOutlineRegular'),
+  IconSlidersTwoOutlineRegular: Symbol('IconSlidersTwoOutlineRegular'),
+  IconTrashOutlineRegular: Symbol('IconTrashOutlineRegular'),
+  IconTriangleRightFillRegular: Symbol('IconTriangleRightFillRegular'),
   Input: Symbol('Input'),
+  Menu: Symbol('Menu'),
   Modal: Symbol('Modal'),
+  StateDot: Symbol('StateDot'),
   Tooltip: Symbol('Tooltip'),
+  relativeTime: () => ({ unit: 'now', n: 0 }),
   useDismissOnOutsidePointer: makeHook(),
 }
 const requireStub = (id) => {
@@ -128,7 +147,9 @@ assert.equal(typeof plugin.apply, 'function', 'client apply')
 assert.deepEqual(Array.from(plugin.inject), [
   'slots', 'locale', 'shortcuts', 'uiWorkspace', 'workspaces', 'sessions',
 ])
-assert.equal(typeof plugin.__internal.filterRows, 'function', 'filter seam')
+for (const name of ['filterRows', 'queryTokens', 'matchesTokens', 'sessionNode', 'buildSessionNodes', 'orderSessions']) {
+  assert.equal(typeof plugin.__internal[name], 'function', `${name} seam`)
+}
 
 // ------------------------------------------------------------- apply run
 
@@ -136,11 +157,11 @@ const registrations = []
 const disposers = []
 const commands = []
 const dictionaries = []
-let finderSource
+let searchRequestSource
 const snapshot = {
   items: [
     { workspaceId: 'ws-a', title: 'dsh-plugins', path: '/Users/me/Code/dsh-plugins', sessionIds: ['s1'], createdAt: '', updatedAt: '' },
-    { workspaceId: 'ws-b', title: 'deepseek-harness', path: '/Users/me/Code/deepseek-harness', sessionIds: [], createdAt: '', updatedAt: '' },
+    { workspaceId: 'ws-b', title: 'deepseek-harness', path: '/Users/me/Code/deepseek-harness', sessionIds: ['s2'], createdAt: '', updatedAt: '' },
     { workspaceId: 'ws-c', title: 'default-workspace', path: '/Users/me/Documents/deepseek-harness/default-workspace', sessionIds: [], createdAt: '', updatedAt: '' },
   ],
   archivedSessionIds: [],
@@ -149,6 +170,7 @@ const snapshot = {
   phase: 'ready',
   error: null,
 }
+const calls = []
 const ctx = {
   effect(callback) {
     const dispose = callback()
@@ -183,37 +205,53 @@ const ctx = {
   },
   workspaces: {
     list: { getSnapshot: () => snapshot },
-    create: async input => ({ workspaceId: 'ws-new', path: input.path }),
+    create: async input => {
+      calls.push(['createWorkspace', input.path])
+      return { workspaceId: 'ws-new', path: input.path }
+    },
+    rename: async (id, title) => { calls.push(['renameWorkspace', id, title]); return {} },
+    delete: async (id) => { calls.push(['deleteWorkspace', id]) },
   },
   sessions: {
-    list: { getSnapshot: () => ({ ids: [], byId: {} }) },
+    searchResultLimit: 20,
+    list: { getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready' }) },
+    search: async (query) => {
+      calls.push(['searchSessions', query])
+      return { ok: true, value: { items: [{ sessionId: 's1', snippet: 'hit' }], hasMore: true } }
+    },
   },
   uiWorkspace: {
-    pickDirectory: async () => '/tmp/picked',
-    openSession: () => {},
-    startSession: () => {},
+    pickDirectory: async () => { calls.push(['pickDirectory']); return '/tmp/picked' },
+    openSession: (id) => { calls.push(['openSession', id]) },
+    startSession: (id) => { calls.push(['startSession', id]) },
   },
 }
 plugin.apply(ctx)
 
-const bySlot = (name, id) => registrations.find(entry =>
-  entry.options.name === name && (id === undefined || entry.options.id === id))
-assert.ok(bySlot('sidebar.footer.action', 'workspace-search'), 'sidebar footer action registered')
-assert.ok(bySlot('shell.overlay', 'workspace-search'), 'finder overlay registered')
+const bySlot = name => registrations.find(entry => entry.options.name === name)
+const browser = bySlot('sidebar.workspaces')
+assert.ok(browser, 'the browser registration exists')
+assert.equal(browser.options.priority, -1, 'the browser shadows the shipped entry')
+assert.equal(browser.options.children, undefined, 'the browser declares no child slots')
+assert.equal(browser.options.locale, 'workspace', 'the browser reuses the shipped workspace copy')
 const hero = bySlot('conversation.hero.workspace')
-assert.ok(hero, 'hero picker registered')
-assert.equal(hero.options.priority, -1, 'hero picker shadows the shipped entry')
-assert.equal(hero.options.children, undefined, 'hero picker declares no child slots')
+assert.ok(hero, 'the hero picker registration exists')
+assert.equal(hero.options.priority, -1, 'the hero picker shadows the shipped entry')
+assert.equal(hero.options.children, undefined, 'the hero picker declares no child slots')
+assert.equal(registrations.length, 2, 'no other surfaces are registered')
 
-const overlay = bySlot('shell.overlay', 'workspace-search')
-const injected = overlay.options.inject()
-assert.equal(typeof injected.hooks.finderOpen.getSnapshot, 'function', 'finder source is observable')
-assert.equal(injected.hooks.finderOpen.getSnapshot(), false, 'finder starts closed')
-const action = bySlot('sidebar.footer.action', 'workspace-search').options.inject()
-action.openFinder()
-assert.equal(injected.hooks.finderOpen.getSnapshot(), true, 'the footer entry opens the finder')
-injected.closeFinder()
-assert.equal(injected.hooks.finderOpen.getSnapshot(), false, 'the dialog closes the finder')
+const browserInjected = browser.options.inject()
+searchRequestSource = browserInjected.hooks.searchRequest
+assert.equal(typeof searchRequestSource.getSnapshot, 'function', 'the browser search request is observable')
+assert.equal(searchRequestSource.getSnapshot(), 0)
+assert.equal(typeof browserInjected.tExtra, 'function', 'the browser receives the extra copy seat')
+assert.equal(browserInjected.searchResultLimit, 20, 'the browser receives the host search bound')
+for (const name of ['openSession', 'startSession', 'addWorkspace', 'renameWorkspace', 'deleteWorkspace', 'searchSessions']) {
+  assert.equal(typeof browserInjected[name], 'function', `browser injected ${name}`)
+}
+const heroInjected = hero.options.inject()
+assert.equal(typeof heroInjected.pickDirectory, 'function')
+assert.equal(typeof heroInjected.createWorkspace, 'function')
 
 assert.equal(commands.length, 1, 'one command registered')
 const command = commands[0]
@@ -222,42 +260,92 @@ assert.deepEqual(Object.keys(command.defaults), [
   'desktop:macos', 'desktop:windows', 'desktop:linux', 'web:macos', 'web:windows', 'web:linux',
 ])
 assert.deepEqual(Array.from(command.regions), ['page', 'editable'])
-assert.deepEqual(Array.from(command.modals), ['search-workspace', 'sidebar'])
+assert.deepEqual(Array.from(command.modals), ['sidebar'])
 assert.equal(command.resolve({ modal: null }).status, 'handled')
 assert.equal(command.resolve({ modal: 'sidebar' }).status, 'handled')
-assert.equal(command.resolve({ modal: 'search-workspace' }).status, 'handled')
 assert.equal(command.resolve({ modal: 'settings' }).status, 'blocked')
 command.resolve({ modal: null }).run()
-assert.equal(injected.hooks.finderOpen.getSnapshot(), true, 'the command opens the finder')
-command.resolve({ modal: 'search-workspace' }).run()
-assert.equal(injected.hooks.finderOpen.getSnapshot(), false, 'the command toggles the finder closed')
+assert.equal(searchRequestSource.getSnapshot(), 1, 'the command requests the browser search')
 
 assert.equal(dictionaries.length, 1, 'one dictionary registration')
 assert.equal(dictionaries[0].ns, 'workspaceSearch')
 assert.deepEqual(Object.keys(dictionaries[0].dicts).sort(), ['en', 'zh'])
 for (const locale of ['zh', 'en']) {
   const dict = dictionaries[0].dicts[locale]
-  for (const key of ['find.action', 'find.title', 'find.placeholder', 'find.noMatch', 'find.newSession',
-    'picker.placeholder', 'picker.add', 'picker.noMatch']) {
+  for (const key of ['find.action', 'find.blocked', 'find.search.placeholder', 'find.search.workspaces',
+    'find.search.sessions', 'find.search.none', 'find.empty.workspaces', 'find.add.failed',
+    'find.picker.placeholder', 'find.picker.add']) {
     assert.equal(typeof dict[key], 'string', `${locale} exposes ${key}`)
   }
 }
 
-// ------------------------------------------------ rendered component smoke
+// --------------------------------------------------- injected browser calls
 
-const t = key => key
-const footerElement = bySlot('sidebar.footer.action', 'workspace-search').component({
-  wide: true, openFinder: () => {}, t,
-})
-assert.ok(footerElement, 'the footer action renders')
-const railElement = bySlot('sidebar.footer.action', 'workspace-search').component({
-  wide: false, openFinder: () => {}, t,
-})
-assert.ok(railElement, 'the rail action renders')
+let pickerResult = '/tmp/picked'
+const originalPick = ctx.uiWorkspace.pickDirectory
+ctx.uiWorkspace.pickDirectory = async () => pickerResult
+calls.length = 0
+await browserInjected.addWorkspace()
+assert.deepEqual(calls, [
+  ['createWorkspace', '/tmp/picked'],
+  ['startSession', 'ws-new'],
+], 'add workspace adopts the path and starts a session there')
+pickerResult = null
+calls.length = 0
+await browserInjected.addWorkspace()
+assert.deepEqual(calls, [], 'cancelling the chooser changes nothing')
+ctx.uiWorkspace.pickDirectory = originalPick
+
+calls.length = 0
+await browserInjected.renameWorkspace('ws-a', 'Renamed')
+await browserInjected.deleteWorkspace('ws-b')
+assert.deepEqual(calls, [['renameWorkspace', 'ws-a', 'Renamed'], ['deleteWorkspace', 'ws-b']])
+
+calls.length = 0
+const search = await browserInjected.searchSessions('hello', new AbortController().signal)
+assert.deepEqual(calls, [['searchSessions', 'hello']])
+assert.equal(search.items.length, 1)
+assert.equal(search.hasMore, true)
+ctx.sessions.search = async () => ({ ok: false, error: { message: 'offline' } })
+await assert.rejects(() => browserInjected.searchSessions('x', new AbortController().signal), /offline/)
+
+// --------------------------------------------------------- rendered smoke
 
 const useWorkspaces = selector => selector(snapshot)
-const useSessions = selector => selector({ ids: [], byId: {} })
-const heroClosed = bySlot('conversation.hero.workspace').component({
+const useSessions = selector => selector({
+  ids: ['s1', 's2'],
+  byId: {
+    s1: { id: 's1', displayTitle: 'First', title: 'First', blank: false, running: false, updatedAt: 200, retainedBy: {}, origin: undefined },
+    s2: { id: 's2', displayTitle: 'Second', title: 'Second', blank: false, running: false, updatedAt: 100, retainedBy: {}, origin: undefined },
+  },
+  phase: 'ready',
+})
+const useSessionStatus = selector => selector(new Map())
+const usePanelInfo = selector => selector({ activePanelId: null })
+const useWorkspaceAccess = () => true
+const baseProps = {
+  wide: true,
+  expandSidebar: () => {},
+  useSectionScroller: () => ({ bindScrollerRef: () => {} }),
+  useSessions,
+  useSessionStatus,
+  useWorkspaces,
+  usePanelInfo,
+  useWorkspaceAccess,
+  renderFactorySlot: () => null,
+  t: key => key,
+  tExtra: key => key,
+  useSearchRequest: selector => selector(0),
+  ...browserInjected,
+}
+const wideTree = browser.component(baseProps)
+assert.ok(wideTree, 'the wide browser renders')
+assert.equal(wideTree.type, 'div')
+const railTree = browser.component({ ...baseProps, wide: false })
+assert.ok(railTree, 'the rail browser renders')
+assert.equal(railTree.props.className, 'dsws-broot dsws-brail')
+
+const heroClosed = hero.component({
   open: false,
   anchorRef: { current: null },
   selectedId: undefined,
@@ -266,10 +354,10 @@ const heroClosed = bySlot('conversation.hero.workspace').component({
   createWorkspace: async () => ({}),
   pickDirectory: async () => null,
   useWorkspaces,
-  t,
+  t: key => key,
 })
 assert.equal(heroClosed, null, 'the closed hero picker renders nothing')
-const heroOpen = bySlot('conversation.hero.workspace').component({
+const heroOpen = hero.component({
   open: true,
   anchorRef: { current: null },
   selectedId: 'ws-a',
@@ -278,33 +366,22 @@ const heroOpen = bySlot('conversation.hero.workspace').component({
   createWorkspace: async () => ({}),
   pickDirectory: async () => null,
   useWorkspaces,
-  t,
+  t: key => key,
 })
 assert.ok(heroOpen?.portal, 'the open hero picker portals its popover')
 
-const finderElement = overlay.component({
-  useFinderOpen: selector => selector(false),
-  useWorkspaces,
-  useSessions,
-  closeFinder: () => {},
-  openFinderWorkspace: () => {},
-  startFinderSession: () => {},
-  t,
-})
-assert.ok(finderElement, 'the finder renders')
-assert.equal(finderElement.type, primitives.Modal, 'the finder uses the shipped Modal')
-assert.equal(finderElement.props.open, false)
-
 // ------------------------------------------------------------- pure helpers
 
-const { filterRows, workspaceRows, distinguishingPathSuffixes, workspaceDisplayTitle } = plugin.__internal
+const {
+  filterRows, queryTokens, matchesTokens, workspaceDisplayTitle, distinguishingPathSuffixes,
+  workspaceRows, buildSessionNodes, orderSessions,
+} = plugin.__internal
 assert.equal(workspaceDisplayTitle('default-workspace', 'Default workspace'), 'Default workspace')
 assert.equal(workspaceDisplayTitle('mine', 'Default workspace'), 'mine')
 
 const rows = workspaceRows(snapshot.items, 'Default workspace')
 assert.equal(rows[0].title, 'dsh-plugins')
 assert.equal(rows[2].title, 'Default workspace', 'the automatic title localizes')
-assert.equal(rows[0].suffix, undefined, 'unique titles carry no suffix')
 
 const same = distinguishingPathSuffixes([
   { id: 'a', title: 'app', path: '/work/one/app' },
@@ -320,15 +397,40 @@ assert.deepEqual(Array.from(filterRows(rows, 'plugins')).map(r => r.id), ['ws-a'
 assert.deepEqual(Array.from(filterRows(rows, 'HARNESS')).map(r => r.id), ['ws-b', 'ws-c'])
 assert.deepEqual(Array.from(filterRows(rows, 'code dsh')).map(r => r.id), ['ws-a'])
 assert.deepEqual(Array.from(filterRows(rows, 'nothing-here')), [])
-assert.deepEqual(Array.from(filterRows(rows, 'default workspace')).map(r => r.id), ['ws-c'],
-  'the localized default title is searchable')
+assert.deepEqual(Array.from(filterRows(rows, 'default workspace')).map(r => r.id), ['ws-c'])
 
-// Rank: an early title match leads a later path match.
-const ranked = filterRows([
-  { id: 'path-hit', title: 'zzz', path: '/a/harness', sessionIds: [] },
-  { id: 'title-hit', title: 'harness', path: '/b', sessionIds: [] },
-], 'harness')
-assert.deepEqual(Array.from(ranked).map(r => r.id), ['title-hit', 'path-hit'])
+assert.deepEqual(Array.from(queryTokens('  Foo   Bar ')), ['foo', 'bar'])
+assert.equal(matchesTokens(['foo'], 'a foo b'), true)
+assert.equal(matchesTokens(['foo', 'bar'], 'foo', 'bar'), true)
+assert.equal(matchesTokens(['foo'], 'nope'), false)
+assert.equal(matchesTokens([], 'anything'), true)
+
+const nodeList = {
+  ids: ['s1', 's2', 's3', 'blank', 'archived', 'sub'],
+  byId: {
+    s1: { id: 's1', title: 'Alpha', displayTitle: 'Alpha', blank: false, running: true, updatedAt: 30, retainedBy: {} },
+    s2: { id: 's2', title: 'Beta', displayTitle: 'Beta', blank: false, running: false, updatedAt: 20, retainedBy: {} },
+    s3: { id: 's3', title: 'Gamma', displayTitle: 'Gamma', blank: false, running: false, updatedAt: 10, retainedBy: {} },
+    blank: { id: 'blank', displayTitle: 'New', blank: true, running: false, updatedAt: 40, retainedBy: {} },
+    archived: { id: 'archived', title: 'Old', displayTitle: 'Old', blank: false, running: false, updatedAt: 1, retainedBy: {} },
+    sub: { id: 'sub', title: 'Child', displayTitle: 'Child', blank: false, running: false, updatedAt: 5, retainedBy: {}, origin: 'subagent' },
+  },
+  phase: 'ready',
+}
+const archivedSet = new Set(['archived'])
+const pinnedSet = new Set(['s2'])
+const nodes = buildSessionNodes(nodeList, new Map(), archivedSet, pinnedSet, 'blank', false)
+assert.deepEqual(Array.from(nodes.keys()).sort(), ['blank', 's1', 's2', 's3'])
+assert.equal(nodes.has('archived'), false, 'archived sessions hide by default')
+assert.equal(nodes.has('sub'), false, 'subagent sessions never list')
+assert.equal(nodes.get('s2').pinned, true)
+const withArchived = buildSessionNodes(nodeList, new Map(), archivedSet, pinnedSet, 'blank', true)
+assert.equal(withArchived.has('archived'), true, 'the archived view includes them')
+
+const ordered = orderSessions(['s1', 's2', 's3'], nodes, false)
+assert.deepEqual(Array.from(ordered).map(n => n.id), ['s2', 's1', 's3'], 'pinned rows lead')
+const byRecency = orderSessions(['s1', 's2', 's3'], nodes, true)
+assert.deepEqual(Array.from(byRecency).map(n => n.id), ['s2', 's1', 's3'], 'pinned row leads, then recency')
 
 for (const dispose of disposers.reverse()) {
   if (typeof dispose === 'function') dispose()

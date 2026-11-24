@@ -17,7 +17,7 @@ const read = name => readFile(new URL(name, root), 'utf8')
 
 const manifest = JSON.parse(await read('package.json'))
 assert.equal(manifest.name, 'dsh-search-workspace')
-assert.equal(manifest.version, '0.0.1')
+assert.equal(manifest.version, '0.0.2')
 assert.equal(manifest.private, undefined, 'the package must be publishable')
 assert.equal(manifest.dsh?.bundle?.patch, './cordis.patch.yml')
 assert.equal(manifest.dsh?.client?.platform, 'web')

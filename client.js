@@ -2016,27 +2016,36 @@ window.__ModuleLoader__.load({
 
       ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'search-workspace: dictionaries')
 
-      ctx.effect(() => ctx.shortcuts.register({
-        id: 'workspace.search',
-        label: () => t('find.action'),
-        aliases: ['find workspace', 'search workspace', 'switch workspace'],
-        defaults: {
-          'desktop:macos': { code: 'KeyK', modifiers: ['primary', 'shift'] },
-          'desktop:windows': { code: 'KeyK', modifiers: ['primary', 'shift'] },
-          'desktop:linux': { code: 'KeyK', modifiers: ['primary', 'shift'] },
-          'web:macos': { code: 'KeyK', modifiers: ['primary', 'shift'] },
-          'web:windows': { code: 'KeyK', modifiers: ['primary', 'shift'] },
-          'web:linux': { code: 'KeyK', modifiers: ['primary', 'shift'] },
-        },
-        regions: ['page', 'editable'],
-        modals: ['sidebar'],
-        resolve: (context) => {
-          if (context.modal !== null && context.modal !== 'sidebar') {
-            return { status: 'blocked', reason: t('find.blocked') }
-          }
-          return { status: 'handled', run: requestBrowserSearch }
-        },
-      }), 'search-workspace: browser search command')
+      ctx.effect(() => {
+        try {
+          return ctx.shortcuts.register({
+            id: 'workspace.search',
+            label: () => t('find.action'),
+            aliases: ['find workspace', 'search workspace', 'switch workspace'],
+            // Web/Linux has no default: the browser only admits a small fixed
+            // chord set, and the shortcut registry rejects any other default
+            // for that profile. The command stays bindable from Settings.
+            defaults: {
+              'desktop:macos': { code: 'KeyK', modifiers: ['primary', 'shift'] },
+              'desktop:windows': { code: 'KeyK', modifiers: ['primary', 'shift'] },
+              'desktop:linux': { code: 'KeyK', modifiers: ['primary', 'shift'] },
+              'web:macos': { code: 'KeyK', modifiers: ['primary', 'shift'] },
+              'web:windows': { code: 'KeyK', modifiers: ['primary', 'shift'] },
+            },
+            regions: ['page', 'editable'],
+            modals: ['sidebar'],
+            resolve: (context) => {
+              if (context.modal !== null && context.modal !== 'sidebar') {
+                return { status: 'blocked', reason: t('find.blocked') }
+              }
+              return { status: 'handled', run: requestBrowserSearch }
+            },
+          })
+        } catch (error) {
+          console.warn('search-workspace: could not register the browser search shortcut', error)
+          return () => {}
+        }
+      }, 'search-workspace: browser search command')
 
       const pickDirectory = async () => {
         const bridge = globalThis.__DSH_DIRECTORY_PICKER__

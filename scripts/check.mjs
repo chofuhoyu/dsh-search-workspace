@@ -256,8 +256,10 @@ assert.equal(typeof heroInjected.createWorkspace, 'function')
 assert.equal(commands.length, 1, 'one command registered')
 const command = commands[0]
 assert.equal(command.id, 'workspace.search')
+// DSH rejects arbitrary Web/Linux defaults: that profile only admits a small
+// fixed chord set, so the command must stay unbound there.
 assert.deepEqual(Object.keys(command.defaults), [
-  'desktop:macos', 'desktop:windows', 'desktop:linux', 'web:macos', 'web:windows', 'web:linux',
+  'desktop:macos', 'desktop:windows', 'desktop:linux', 'web:macos', 'web:windows',
 ])
 assert.deepEqual(Array.from(command.regions), ['page', 'editable'])
 assert.deepEqual(Array.from(command.modals), ['sidebar'])
